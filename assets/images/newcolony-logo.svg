@@ -1,0 +1,5 @@
+<svg width="200" height="48" viewBox="0 0 200 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="200" height="48" fill="none"/>
+  <text x="2" y="32" font-family="'Space Grotesk', 'Inter', sans-serif" font-size="32" font-weight="700" fill="white">new colony</text>
+  <circle cx="185" cy="22" r="6" stroke="white" stroke-width="2" fill="none" />
+</svg>
