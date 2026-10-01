@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CutBoard } from "./components/CutBoard";
 import { ExportDialog } from "./components/ExportDialog";
 import { ImportDialog } from "./components/ImportDialog";
+import { ScriptMode } from "./components/ScriptMode";
 import { StoryPanel } from "./components/StoryPanel";
 import { TranscriptPane } from "./components/TranscriptPane";
 import { cutToRanges, totalDuration, type Range } from "./lib/exporters";
@@ -14,16 +15,32 @@ export interface Busy {
   progress?: number;
 }
 
+type Mode = "story" | "script";
+const MODE_KEY = "storycut:mode";
+
 export default function App() {
+  const [mode, setModeState] = useState<Mode>(() => {
+    try {
+      return localStorage.getItem(MODE_KEY) === "script" ? "script" : "story";
+    } catch {
+      return "story";
+    }
+  });
+  const setMode = (m: Mode) => {
+    setModeState(m);
+    try {
+      localStorage.setItem(MODE_KEY, m);
+    } catch {
+      // ignore
+    }
+  };
   const [project, setProject] = useState<Project>(loadProject);
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [isVideo, setIsVideo] = useState(true);
   const [time, setTime] = useState(0);
   const [selection, setSelection] = useState<Set<string>>(new Set());
-  const [dialog, setDialog] = useState<"import" | "export" | null>(() =>
-    loadProject().segments.length ? null : "import",
-  );
+  const [dialog, setDialog] = useState<"import" | "export" | null>(null);
   const [busy, setBusy] = useState<Busy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [aiReady, setAiReady] = useState<boolean | null>(null);
@@ -56,10 +73,12 @@ export default function App() {
   const activeCutUid = useMemo(() => {
     if (!playing) return null;
     const r = playing.ranges[playing.index];
-    return project.cut.find((c) => {
-      const s = segById.get(c.segmentId);
-      return s && s.start >= r.start - 0.01 && s.end <= r.end + 0.01 && time >= s.start && time < s.end;
-    })?.uid ?? null;
+    return (
+      project.cut.find((c) => {
+        const s = segById.get(c.segmentId);
+        return s && s.start >= r.start - 0.01 && s.end <= r.end + 0.01 && time >= s.start && time < s.end;
+      })?.uid ?? null
+    );
   }, [playing, project.cut, segById, time]);
 
   // ---- media -------------------------------------------------------------
@@ -129,7 +148,13 @@ export default function App() {
   };
 
   const onDemo = (segments: Segment[]) => {
-    setProject({ ...emptyProject(), name: "Lantern — founder story", mediaName: "lantern_interview_A001.mov", mediaDuration: 133, segments });
+    setProject({
+      ...emptyProject(),
+      name: "Lantern — founder story",
+      mediaName: "lantern_interview_A001.mov",
+      mediaDuration: 133,
+      segments,
+    });
     setMediaFile(null);
     setMediaUrl(null);
     setSelection(new Set());
@@ -163,7 +188,11 @@ export default function App() {
       });
       const data = (await res.json()) as StoryPlan & { error?: string };
       if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-      update({ story: data, cut: storyToCut(data), name: project.name === "Untitled story" ? data.title : project.name });
+      update({
+        story: data,
+        cut: storyToCut(data),
+        name: project.name === "Untitled story" ? data.title : project.name,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -182,122 +211,145 @@ export default function App() {
           </span>
           Storycut
         </div>
-        <input
-          className="title-input"
-          value={project.name}
-          onChange={(e) => update({ name: e.target.value })}
-          aria-label="Project name"
-        />
-        <div className="topbar-actions">
-          <button onClick={() => setDialog("import")}>Import</button>
-          <button className="primary" disabled={!project.cut.length} onClick={() => setDialog("export")}>
-            Export to editor
+        <nav className="tabs" aria-label="Mode">
+          <button className={mode === "story" ? "active" : ""} onClick={() => setMode("story")}>
+            Story cut
           </button>
-        </div>
+          <button className={mode === "script" ? "active" : ""} onClick={() => setMode("script")}>
+            Resolve → Script
+          </button>
+        </nav>
+        {mode === "story" && (
+          <>
+            <input
+              className="title-input"
+              value={project.name}
+              onChange={(e) => update({ name: e.target.value })}
+              aria-label="Project name"
+            />
+            <div className="topbar-actions">
+              <button onClick={() => setDialog("import")}>Import</button>
+              <button className="primary" disabled={!project.cut.length} onClick={() => setDialog("export")}>
+                Export to editor
+              </button>
+            </div>
+          </>
+        )}
       </header>
 
-      {error && (
-        <div className="banner error" role="alert">
-          {error}
-          <button className="ghost" onClick={() => setError(null)} aria-label="Dismiss">
-            ✕
-          </button>
-        </div>
-      )}
-      {busy && (
-        <div className="banner busy" role="status">
-          <span className="spinner" /> {busy.message}
-          {busy.progress != null && <progress max={100} value={busy.progress} />}
-        </div>
-      )}
-
-      {!hasTranscript ? (
-        <main className="empty">
-          <h1>Find the story in your footage.</h1>
-          <p>
-            Bring in an interview, speech or vlog. Storycut transcribes it on your machine, builds a paper edit with
-            AI, and hands a cut back to Final Cut, Resolve or Premiere.
-          </p>
-          <button className="primary" onClick={() => setDialog("import")}>
-            Start a project
-          </button>
-        </main>
+      {mode === "script" ? (
+        <ScriptMode />
       ) : (
-        <main className="workspace">
-          <TranscriptPane
-            segments={project.segments}
-            cut={project.cut}
-            story={project.story}
-            activeId={activeSegment}
-            selection={selection}
-            setSelection={setSelection}
-            onSeek={seek}
-            onAdd={addToCut}
-            onRenameSpeaker={renameSpeaker}
-            onEditText={editText}
-            canSeek={Boolean(mediaUrl)}
-          />
-
-          <section className="center">
-            <div className={`player ${isVideo ? "" : "audio"} ${mediaUrl ? "" : "offline"}`}>
-              {mediaUrl ? (
-                <video
-                  ref={mediaRef}
-                  src={mediaUrl}
-                  controls
-                  onLoadedMetadata={onLoadedMetadata}
-                  onTimeUpdate={onTimeUpdate}
-                  onEnded={() => setPlaying(null)}
-                />
-              ) : (
-                <div className="player-placeholder">
-                  <p>{project.mediaName ? `Relink “${project.mediaName}” to preview` : "No media loaded"}</p>
-                  <label className="button">
-                    Choose media
-                    <input type="file" accept="video/*,audio/*" hidden onChange={(e) => e.target.files?.[0] && onMedia(e.target.files[0])} />
-                  </label>
-                </div>
-              )}
+        <>
+          {error && (
+            <div className="banner error" role="alert">
+              {error}
+              <button className="ghost" onClick={() => setError(null)} aria-label="Dismiss">
+                ✕
+              </button>
             </div>
-            <StoryPanel
-              brief={project.brief}
-              story={project.story}
-              segById={segById}
-              aiReady={aiReady}
-              busy={Boolean(busy)}
-              onFind={findStory}
-              onApply={() => project.story && update({ cut: storyToCut(project.story) })}
-              onSeek={seek}
+          )}
+          {busy && (
+            <div className="banner busy" role="status">
+              <span className="spinner" /> {busy.message}
+              {busy.progress != null && <progress max={100} value={busy.progress} />}
+            </div>
+          )}
+
+          {!hasTranscript ? (
+            <main className="empty">
+              <h1>Find the story in your footage.</h1>
+              <p>
+                Bring in an interview, speech or vlog. Storycut transcribes it on your machine, builds a paper edit with
+                AI, and hands a cut back to Final Cut, Resolve or Premiere.
+              </p>
+              <button className="primary" onClick={() => setDialog("import")}>
+                Start a project
+              </button>
+            </main>
+          ) : (
+            <main className="workspace">
+              <TranscriptPane
+                segments={project.segments}
+                cut={project.cut}
+                story={project.story}
+                activeId={activeSegment}
+                selection={selection}
+                setSelection={setSelection}
+                onSeek={seek}
+                onAdd={addToCut}
+                onRenameSpeaker={renameSpeaker}
+                onEditText={editText}
+                canSeek={Boolean(mediaUrl)}
+              />
+
+              <section className="center">
+                <div className={`player ${isVideo ? "" : "audio"} ${mediaUrl ? "" : "offline"}`}>
+                  {mediaUrl ? (
+                    <video
+                      ref={mediaRef}
+                      src={mediaUrl}
+                      controls
+                      onLoadedMetadata={onLoadedMetadata}
+                      onTimeUpdate={onTimeUpdate}
+                      onEnded={() => setPlaying(null)}
+                    />
+                  ) : (
+                    <div className="player-placeholder">
+                      <p>{project.mediaName ? `Relink “${project.mediaName}” to preview` : "No media loaded"}</p>
+                      <label className="button">
+                        Choose media
+                        <input
+                          type="file"
+                          accept="video/*,audio/*"
+                          hidden
+                          onChange={(e) => e.target.files?.[0] && onMedia(e.target.files[0])}
+                        />
+                      </label>
+                    </div>
+                  )}
+                </div>
+                <StoryPanel
+                  brief={project.brief}
+                  story={project.story}
+                  segById={segById}
+                  aiReady={aiReady}
+                  busy={Boolean(busy)}
+                  onFind={findStory}
+                  onApply={() => project.story && update({ cut: storyToCut(project.story) })}
+                  onSeek={seek}
+                />
+              </section>
+
+              <CutBoard
+                cut={project.cut}
+                segById={segById}
+                runtime={runtime}
+                target={project.brief.targetSeconds}
+                activeUid={activeCutUid}
+                playing={Boolean(playing)}
+                canPlay={Boolean(mediaUrl)}
+                onPlay={playCut}
+                onSeek={seek}
+                onChange={(cut) => update({ cut })}
+              />
+            </main>
+          )}
+
+          {dialog === "import" && (
+            <ImportDialog
+              mediaFile={mediaFile}
+              onMedia={onMedia}
+              onSegments={onSegments}
+              onDemo={onDemo}
+              onClose={() => setDialog(null)}
+              setBusy={setBusy}
+              setError={setError}
             />
-          </section>
-
-          <CutBoard
-            cut={project.cut}
-            segById={segById}
-            runtime={runtime}
-            target={project.brief.targetSeconds}
-            activeUid={activeCutUid}
-            playing={Boolean(playing)}
-            canPlay={Boolean(mediaUrl)}
-            onPlay={playCut}
-            onSeek={seek}
-            onChange={(cut) => update({ cut })}
-          />
-        </main>
+          )}
+          {dialog === "export" && <ExportDialog project={project} onChange={update} onClose={() => setDialog(null)} />}
+        </>
       )}
-
-      {dialog === "import" && (
-        <ImportDialog
-          mediaFile={mediaFile}
-          onMedia={onMedia}
-          onSegments={onSegments}
-          onDemo={onDemo}
-          onClose={() => setDialog(null)}
-          setBusy={setBusy}
-          setError={setError}
-        />
-      )}
-      {dialog === "export" && <ExportDialog project={project} onChange={update} onClose={() => setDialog(null)} />}
     </div>
   );
 }

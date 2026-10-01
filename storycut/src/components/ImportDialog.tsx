@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Busy } from "../App";
 import { demoSegments } from "../lib/demo";
 import { parseTranscriptFile } from "../lib/parsers";
-import { transcribe, WHISPER_MODELS } from "../lib/transcribe";
+import { transcribe, whisperError, WHISPER_MODELS } from "../lib/transcribe";
 import type { Segment } from "../lib/types";
 import { Modal } from "./Modal";
 
@@ -36,12 +36,7 @@ export function ImportDialog({ mediaFile, onMedia, onSegments, onDemo, onClose, 
       if (!segs.length) throw new Error("No speech found in this file.");
       onSegments(segs);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(
-        /fetch|network/i.test(msg)
-          ? "Couldn't download the Whisper model. Check your connection, or import an SRT/VTT transcript instead."
-          : `Transcription failed: ${msg}`,
-      );
+      setError(whisperError(e));
     } finally {
       report(null);
       setRunning(false);

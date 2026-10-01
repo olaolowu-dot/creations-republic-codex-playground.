@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Segment, StoryBrief, StoryPlan } from "../src/lib/types.ts";
 
-const MODEL = process.env.STORYCUT_MODEL || "claude-opus-5-5";
+export const MODEL = process.env.STORYCUT_MODEL || "claude-opus-5-5";
 
 const SYSTEM = `You are a senior documentary and branded-content editor. You build paper edits: you read a transcript and choose which lines to use, in what order, so the finished piece tells a clear, emotionally true story.
 
@@ -73,10 +73,24 @@ export class StoryError extends Error {
   ) {
     super(message);
   }
+
+  /** Maps SDK errors to messages the UI can show. */
+  static from(err: unknown): Error {
+    if (err instanceof StoryError) return err;
+    if (err instanceof Anthropic.AuthenticationError) {
+      return new StoryError("The server's Anthropic API key is missing or invalid. Set ANTHROPIC_API_KEY.", 503);
+    }
+    if (err instanceof Anthropic.RateLimitError) return new StoryError("Rate limited by the Claude API. Try again shortly.", 429);
+    if (err instanceof Anthropic.APIError) return new StoryError(`Claude API error: ${err.message}`, 502);
+    if (err instanceof Error && /api key|apiKey|authToken/i.test(err.message)) {
+      return new StoryError("No Anthropic API key configured on the server. Set ANTHROPIC_API_KEY.", 503);
+    }
+    return err instanceof Error ? err : new Error(String(err));
+  }
 }
 
 let client: Anthropic | null = null;
-const getClient = () => (client ??= new Anthropic());
+export const getClient = () => (client ??= new Anthropic());
 
 export async function findStory(segments: Segment[], brief: StoryBrief): Promise<StoryPlan> {
   const user = `<brief>
@@ -107,15 +121,7 @@ Build the paper edit.`;
       })
       .finalMessage();
   } catch (err) {
-    if (err instanceof Anthropic.AuthenticationError) {
-      throw new StoryError("The server's Anthropic API key is missing or invalid. Set ANTHROPIC_API_KEY.", 503);
-    }
-    if (err instanceof Anthropic.RateLimitError) throw new StoryError("Rate limited by the Claude API. Try again shortly.", 429);
-    if (err instanceof Anthropic.APIError) throw new StoryError(`Claude API error: ${err.message}`, 502);
-    if (err instanceof Error && /api key|apiKey|authToken/i.test(err.message)) {
-      throw new StoryError("No Anthropic API key configured on the server. Set ANTHROPIC_API_KEY.", 503);
-    }
-    throw err;
+    throw StoryError.from(err);
   }
 
   if (message.stop_reason === "refusal") throw new StoryError("Claude declined to edit this transcript.", 422);

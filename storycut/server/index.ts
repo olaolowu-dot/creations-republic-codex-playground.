@@ -2,6 +2,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { writeScript } from "./script.ts";
 import { findStory, StoryError } from "./story.ts";
 
 const app = express();
@@ -45,6 +46,51 @@ app.post("/api/story", async (req, res) => {
     const status = err instanceof StoryError ? err.status : 500;
     const message = err instanceof Error ? err.message : "Unexpected error";
     console.error("[story]", message);
+    res.status(status).json({ error: message });
+  }
+});
+
+const ScriptRequest = z.object({
+  timelines: z
+    .array(
+      z.object({
+        name: z.string().max(300),
+        clips: z
+          .array(
+            z.object({
+              id: z.string().max(64),
+              name: z.string().max(500),
+              file: z.string().max(500),
+              recIn: z.number(),
+              recOut: z.number(),
+              lines: z.array(z.object({ id: z.string().max(64), start: z.number(), text: z.string().max(4000) })).max(5000),
+            }),
+          )
+          .max(5000),
+      }),
+    )
+    .min(1)
+    .max(50),
+  references: z.array(z.object({ name: z.string().max(300), text: z.string().max(400_000) })).max(200),
+  notes: z.string().max(4000),
+});
+
+app.post("/api/script", async (req, res) => {
+  const parsed = ScriptRequest.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid request: " + parsed.error.issues[0]?.message });
+    return;
+  }
+  if (!parsed.data.timelines.some((t) => t.clips.some((c) => c.lines.length))) {
+    res.status(400).json({ error: "Nothing to assign yet: transcribe the clips first." });
+    return;
+  }
+  try {
+    res.json(await writeScript(parsed.data));
+  } catch (err) {
+    const status = err instanceof StoryError ? err.status : 500;
+    const message = err instanceof Error ? err.message : "Unexpected error";
+    console.error("[script]", message);
     res.status(status).json({ error: message });
   }
 });
